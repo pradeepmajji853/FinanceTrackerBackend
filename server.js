@@ -144,101 +144,94 @@ app.post("/login", async (req, res) => {
   }
 });
 
-app.get('/users/:userId', (req, res) => {
-  const userId = req.params.userId;
-
-  const query = 'SELECT id, first_name, last_name, email FROM users WHERE id = ?';
-  db.query(query, [userId], (err, results) => {
-    if (err) {
-      console.error("Error fetching user data:", err);
-      return res.status(500).send("An error occurred while fetching user data");
-    }
-    if (results.length === 0) {
+app.get('/users/:userId', async (req, res) => {
+  try {
+    const userId = req.params.userId;
+    const user = await User.findById(userId).select('-password');
+    if (!user) {
       return res.status(404).send("User not found");
     }
-    res.json(results[0]);
-  });
-});
-
-app.post('/savingswallet', (req, res) => {
-  const { userId, type, amount, date } = req.body;
-  const query = 'INSERT INTO savingswallet (user_id, type, amount, date) VALUES (?, ?, ?, ?)';
-  db.query(query, [userId, type, amount, date], (err, result) => {
-    if (err) {
-      console.error("Error adding transaction:", err);
-      return res.status(500).send("An error occurred while adding transaction");
-    }
-    res.send('Transaction added to database');
-  });
-});
-
-app.get('/savingswallet/:userId', (req, res) => {
-  const userId = req.params.userId;
-
-  const query = 'SELECT * FROM savingswallet WHERE user_id = ?';
-  db.query(query, [userId], (err, results) => {
-    if (err) {
-      console.error("Error fetching transactions:", err);
-      return res.status(500).send("An error occurred while fetching transactions");
-    }
-    res.json(results);
-  });
-});
-
-app.post('/transactions', (req, res) => {
-  const { userId, amount, description, category, date, type } = req.body;
-
-  if (!userId || !amount || !description || !category || !date || !type) {
-    return res.status(400).send("All fields are required");
+    res.json(user);
+  } catch (error) {
+    console.error("Error fetching user data:", error);
+    res.status(500).send("An error occurred while fetching user data");
   }
+});
 
-  const query = 'INSERT INTO transactions (user_id, amount, description, category, date, type) VALUES (?, ?, ?, ?, ?, ?)';
-  
-  db.query(query, [userId, amount, description, category, date, type], (err, result) => {
-    if (err) {
-      console.error("Error adding transaction:", err);
-      return res.status(500).send("An error occurred while adding transaction");
+app.post('/savingswallet', async (req, res) => {
+  try {
+    const { userId, type, amount, date } = req.body;
+    const wallet = new SavingsWallet({ userId, type, amount, date });
+    await wallet.save();
+    res.status(201).send('Transaction added to database');
+  } catch (error) {
+    console.error("Error adding transaction:", error);
+    res.status(500).send("An error occurred while adding transaction");
+  }
+});
+
+app.get('/savingswallet/:userId', async (req, res) => {
+  try {
+    const userId = req.params.userId;
+    const transactions = await SavingsWallet.find({ userId });
+    res.json(transactions);
+  } catch (error) {
+    console.error("Error fetching transactions:", error);
+    res.status(500).send("An error occurred while fetching transactions");
+  }
+});
+
+app.post('/transactions', async (req, res) => {
+  try {
+    const { userId, amount, description, category, date, type } = req.body;
+    if (!userId || !amount || !description || !category || !date || !type) {
+      return res.status(400).send("All fields are required");
     }
+    
+    const transaction = new Transaction({
+      userId,
+      amount,
+      description,
+      category,
+      date,
+      type
+    });
+    await transaction.save();
     res.status(201).send('Transaction added successfully');
-  });
-});
-
-app.get('/transactions', (req, res) => {
-  const userId = req.query.userId;
-
-  if (!userId) {
-    return res.status(400).send("User ID is required");
+  } catch (error) {
+    console.error("Error adding transaction:", error);
+    res.status(500).send("An error occurred while adding transaction");
   }
-
-  const query = 'SELECT * FROM transactions WHERE user_id = ?';
-  db.query(query, [userId], (err, results) => {
-    if (err) {
-      console.error("Error fetching transactions:", err);
-      return res.status(500).send("An error occurred while fetching transactions");
-    }
-    res.json(results);
-  });
 });
 
-app.get('/transactions/balance', (req, res) => {
-  const userId = req.query.userId;
-
-  const query = `
-    SELECT 
-      SUM(CASE WHEN type = 'credit' THEN amount ELSE 0 END) -
-      SUM(CASE WHEN type = 'debit' THEN amount ELSE 0 END) AS balance 
-    FROM transactions 
-    WHERE user_id = ?
-  `;
-  
-  db.query(query, [userId], (err, results) => {
-    if (err) {
-      console.error("Error fetching balance:", err);
-      return res.status(500).send("An error occurred while fetching balance");
+app.get('/transactions', async (req, res) => {
+  try {
+    const userId = req.query.userId;
+    if (!userId) {
+      return res.status(400).send("User ID is required");
     }
-    const balance = results[0].balance || 0; 
+    const transactions = await Transaction.find({ userId });
+    res.json(transactions);
+  } catch (error) {
+    console.error("Error fetching transactions:", error);
+    res.status(500).send("An error occurred while fetching transactions");
+  }
+});
+
+app.get('/transactions/balance', async (req, res) => {
+  try {
+    const userId = req.query.userId;
+    const transactions = await Transaction.find({ userId });
+    
+    const balance = transactions.reduce((acc, trans) => {
+      return acc + (trans.type === 'credit' ? trans.amount : -trans.amount);
+    }, 0);
+    
     res.json({ balance });
-  });
+  } catch (error) {
+    console.error("Error fetching balance:", error);
+    res.status(500).send("An error occurred while fetching balance");
+  }
 });
 
 app.post('/BankAccountdashboard', (req, res) => {
@@ -293,73 +286,47 @@ app.get('/BankAccountdashboard', (req, res) => {
   });
 });
 
-app.post('/budgets', (req, res) => {
-  const { userId, budgetName, amount, currency, category, recurrence, startDate, endDate } = req.body;
-  const query = `
-    INSERT INTO budgets (userId, budgetName, amount, currency, category, recurrence, startDate, endDate)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `;
-  db.query(query, [userId, budgetName, amount, currency, category, recurrence, startDate, endDate], (err, result) => {
-    if (err) {
-      console.error('Error adding budget:', err);
-      res.status(500).json({ error: 'Internal Server Error' });
-    } else {
-      res.status(201).json({ id: result.insertId, ...req.body });
-    }
-  });
+app.post('/budgets', async (req, res) => {
+  try {
+    const budget = new Budget(req.body);
+    await budget.save();
+    res.status(201).json(budget);
+  } catch (error) {
+    console.error('Error adding budget:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
 });
 
-app.get('/budgets/:userId', (req, res) => {
-  const { userId } = req.params;
-  const query = 'SELECT * FROM budgets WHERE userId = ?';
-  db.query(query, [userId], (err, results) => {
-    if (err) {
-      console.error('Error fetching budgets:', err);
-      res.status(500).json({ error: 'Internal Server Error' });
-    } else {
-      res.status(200).json(results);
-    }
-  });
+app.get('/budgets/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const budgets = await Budget.find({ userId });
+    res.status(200).json(budgets);
+  } catch (error) {
+    console.error('Error fetching budgets:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
 });
 
 app.get('/budgets/:userId/details', async (req, res) => {
-  const userId = req.params.userId;
-
-  const budgetQuery = 'SELECT * FROM budgets WHERE userId = ?';
-  const transactionQuery = `
-    SELECT category, SUM(amount) as spentAmount
-    FROM transactions
-    WHERE user_id = ? AND type = 'debit'
-    GROUP BY category
-  `;
-
   try {
-    const budgets = await new Promise((resolve, reject) => {
-      db.query(budgetQuery, [userId], (err, results) => {
-        if (err) {
-          return reject(err);
-        }
-        resolve(results);
-      });
+    const userId = req.params.userId;
+    const budgets = await Budget.find({ userId });
+    const transactions = await Transaction.find({ 
+      userId, 
+      type: 'debit' 
     });
 
-    const spentAmounts = await new Promise((resolve, reject) => {
-      db.query(transactionQuery, [userId], (err, results) => {
-        if (err) {
-          return reject(err);
-        }
-        resolve(results);
-      });
-    });
+    const spentByCategory = transactions.reduce((acc, trans) => {
+      acc[trans.category] = (acc[trans.category] || 0) + trans.amount;
+      return acc;
+    }, {});
 
-    const budgetDetails = budgets.map(budget => {
-      const spentAmount = spentAmounts.find(spent => spent.category === budget.category)?.spentAmount || 0;
-      return {
-        ...budget,
-        spentAmount,
-        remainingAmount: budget.amount - spentAmount
-      };
-    });
+    const budgetDetails = budgets.map(budget => ({
+      ...budget.toObject(),
+      spentAmount: spentByCategory[budget.category] || 0,
+      remainingAmount: budget.amount - (spentByCategory[budget.category] || 0)
+    }));
 
     res.status(200).json(budgetDetails);
   } catch (error) {
